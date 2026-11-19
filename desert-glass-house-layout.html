@@ -130,9 +130,17 @@ th.n,td.n{text-align:right;font-family:var(--f-mono);font-variant-numeric:tabula
 .sumsec h3{margin:0 0 6px;font:600 11px var(--f-body);letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
 
 [hidden]{display:none!important}
-#io{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:20px}
-#io .box{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;width:min(560px,100%);display:flex;flex-direction:column;gap:10px}
-#io h2{margin:0;font:700 17px var(--f-display);text-transform:none;letter-spacing:0;color:var(--ink)}
+#io,#srv{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:20px}
+#io .box,#srv .box{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;width:min(560px,100%);display:flex;flex-direction:column;gap:10px}
+.srvlist{border:1px solid var(--line);border-radius:10px;max-height:240px;overflow:auto;background:var(--bg)}
+.srvlist>p{padding:12px;margin:0}
+.srvrow{display:flex;align-items:center;gap:8px;padding:8px 10px;border-top:1px solid var(--line)}
+.srvrow:first-child{border-top:0}
+.srvname{flex:1;min-width:0;display:flex;flex-direction:column}
+.srvname b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.srvname span{font-size:11px;color:var(--muted)}
+#srv .box{max-height:100%;overflow:auto}
+#io h2,#srv h2{margin:0;font:700 17px var(--f-display);text-transform:none;letter-spacing:0;color:var(--ink)}
 #io textarea{width:100%;height:220px;border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:8px;font:400 11px/1.4 var(--f-mono);resize:vertical}
 
 @media (max-width:960px){
@@ -167,8 +175,8 @@ th.n,td.n{text-align:right;font-family:var(--f-mono);font-variant-numeric:tabula
       <button class="btn" id="b-under" aria-pressed="false" title="Overlay the original AS-BUILT drawing to check the traced walls">Original plan</button>
       <button class="btn" id="b-undo" title="Undo (Ctrl/Cmd+Z)">Undo</button>
       <button class="btn" id="b-redo" title="Redo (Shift+Ctrl/Cmd+Z)">Redo</button>
-      <button class="btn primary" id="b-save" title="Download this layout as a file (Ctrl/Cmd+S)">Save file</button>
-      <button class="btn" id="b-open" title="Open a saved layout file (Ctrl/Cmd+O)">Open file</button>
+      <button class="btn primary" id="b-save" title="Save this layout to the website (Ctrl/Cmd+S)">Save</button>
+      <button class="btn" id="b-open" title="Open a saved layout (Ctrl/Cmd+O)">Open</button>
       <input type="file" id="f-open" accept=".json,application/json" hidden>
       <button class="btn" id="b-io" title="Copy or paste layout text">Copy / paste</button>
     </div>
@@ -209,6 +217,24 @@ th.n,td.n{text-align:right;font-family:var(--f-mono);font-variant-numeric:tabula
     <div class="blk" id="insp"></div>
     <div class="blk" id="sum"></div>
   </aside>
+</div>
+
+<div id="srv" hidden>
+  <div class="box" role="dialog" aria-modal="true" aria-labelledby="srv-h">
+    <h2 id="srv-h">Layouts on this site</h2>
+    <div id="srv-list" class="srvlist" aria-live="polite"></div>
+    <div class="fields">
+      <label class="wide">Save the current layout as<input id="srv-name" type="text" maxlength="60" placeholder="e.g. Opening day v2" autocomplete="off"></label>
+      <label>Passcode (to save or delete)<input id="srv-pass" type="password" autocomplete="off"></label>
+      <label style="justify-content:flex-end"><button class="btn primary" id="srv-save">Save to site</button></label>
+    </div>
+    <div id="srv-msg" class="hint" role="status"></div>
+    <div class="row" style="margin:0">
+      <button class="btn" id="srv-dl">Download file</button>
+      <button class="btn" id="srv-up">Open file from computer</button>
+      <button class="btn" id="srv-close" style="margin-left:auto">Close</button>
+    </div>
+  </div>
 </div>
 
 <div id="io" hidden>
@@ -668,9 +694,9 @@ var sumT=null;function renderSummaryLight(){clearTimeout(sumT);sumT=setTimeout(r
 
 /* ---------- keyboard ---------- */
 document.addEventListener('keydown',function(e){
-  if(e.key==='Escape'&&!$('#io').hidden){$('#io').hidden=true;return}
-  if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='s'){e.preventDefault();saveFile();return}
-  if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='o'){e.preventDefault();$('#f-open').click();return}
+  if(e.key==='Escape'&&(!$('#io').hidden||!$('#srv').hidden)){$('#io').hidden=true;$('#srv').hidden=true;return}
+  if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='s'){e.preventDefault();openSrv('save');return}
+  if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='o'){e.preventDefault();openSrv('open');return}
   var t=e.target,typing=t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.tagName==='SELECT');
   var mod=e.metaKey||e.ctrlKey;
   if(mod&&e.key.toLowerCase()==='z'){if(typing&&t.id!=='')return;e.preventDefault();e.shiftKey?redo():undo();return}
@@ -739,8 +765,67 @@ function openFile(f){
   r.onload=function(){toast(applyLayout(String(r.result))?'Opened '+f.name+'.':'That file is not a Desert Glass House layout.')};
   r.onerror=function(){toast('Could not read that file.')};
   r.readAsText(f)}
-$('#b-save').addEventListener('click',saveFile);
-$('#b-open').addEventListener('click',function(){$('#f-open').click()});
+/* ---------- layouts stored on the website (layouts.php) ---------- */
+var API='layouts.php',curName='',armT=null,overwrite=false;
+try{curName=localStorage.getItem('dgh-name')||''}catch(_){}
+function api(action,body,qs){
+  var o={cache:'no-store'};
+  if(body){o.method='POST';o.headers={'Content-Type':'application/json'};o.body=JSON.stringify(body)}
+  return fetch(API+'?action='+action+(qs||''),o).then(function(r){
+    return r.text().then(function(t){
+      var j;try{j=JSON.parse(t)}catch(_){var e0=new Error('nosrv');throw e0}
+      if(!r.ok){var e=new Error((j&&j.error)||('Server error '+r.status));e.status=r.status;throw e}
+      return j})})}
+function srvMsg(t,bad){var m=$('#srv-msg');m.textContent=t;m.className='hint'+(bad?' warn':'')}
+function srvErr(e){
+  if(e.message==='nosrv'||!e.status)srvMsg('Saving to the website needs layouts.php next to this page on your server. You can still download or open files from your computer below.',1);
+  else srvMsg(e.message,1)}
+function closeSrv(){$('#srv').hidden=true}
+function openSrv(mode){
+  $('#srv').hidden=false;$('#io').hidden=true;
+  try{$('#srv-pass').value=sessionStorage.getItem('dgh-pass')||''}catch(_){}
+  $('#srv-name').value=curName;overwrite=false;$('#srv-save').textContent='Save to site';srvMsg('');
+  refreshList();
+  setTimeout(function(){(mode==='save'?$('#srv-name'):$('#srv-close')).focus()},0)}
+function refreshList(){
+  var L=$('#srv-list');L.innerHTML='<p class="hint">Loading layouts…</p>';
+  api('list').then(function(j){
+    if(!j.layouts.length){L.innerHTML='<p class="hint">No saved layouts yet. Name this one below and choose Save to site.</p>';return}
+    L.innerHTML=j.layouts.map(function(r){
+      var d=new Date(r.saved),when=isNaN(d)?'':d.toLocaleString(undefined,{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'});
+      return '<div class="srvrow"><div class="srvname"><b>'+esc(r.name)+'</b><span class="mono">'+esc(when)+' &middot; '+r.items+' items, '+r.zones+' zones</span></div>'+
+        '<button class="btn" data-open="'+esc(r.id)+'">Open</button><button class="btn danger" data-del="'+esc(r.id)+'">Delete</button></div>'}).join('')
+  }).catch(function(e){
+    L.innerHTML='<p class="hint">'+((e.message==='nosrv'||!e.status)?'Layouts on the website are not available here.':esc(e.message))+'</p>';srvErr(e)})}
+$('#srv-list').addEventListener('click',function(e){
+  var b=e.target.closest('button');if(!b)return;
+  if(b.dataset.open){
+    srvMsg('Opening…');
+    api('load',null,'&id='+encodeURIComponent(b.dataset.open)).then(function(j){
+      if(applyLayout(JSON.stringify(j))){curName=j.name||b.dataset.open;try{localStorage.setItem('dgh-name',curName)}catch(_){}closeSrv();toast('Opened "'+curName+'".')}
+      else srvMsg('That layout could not be read.',1)}).catch(srvErr)}
+  else if(b.dataset.del){
+    if(!b.dataset.arm){b.dataset.arm='1';b.textContent='Sure?';clearTimeout(armT);armT=setTimeout(function(){b.dataset.arm='';b.textContent='Delete'},3000);return}
+    var pass=$('#srv-pass').value;if(!pass){srvMsg('Enter the passcode to delete.',1);b.dataset.arm='';b.textContent='Delete';return}
+    api('delete',{id:b.dataset.del,pass:pass}).then(function(){srvMsg('Deleted.');refreshList()}).catch(srvErr)}});
+$('#srv-name').addEventListener('input',function(){overwrite=false;$('#srv-save').textContent='Save to site'});
+$('#srv-save').addEventListener('click',function(){
+  var name=$('#srv-name').value.trim(),pass=$('#srv-pass').value;
+  if(!name){srvMsg('Give the layout a name first.',1);return}
+  if(!pass){srvMsg('Enter the passcode to save.',1);return}
+  srvMsg('Saving…');
+  api('save',{name:name,pass:pass,overwrite:overwrite,data:{items:S.items,zones:S.zones}}).then(function(j){
+    curName=j.name;try{localStorage.setItem('dgh-name',curName);sessionStorage.setItem('dgh-pass',pass)}catch(_){}
+    overwrite=false;$('#srv-save').textContent='Save to site';srvMsg('Saved "'+j.name+'".');refreshList();toast('Saved "'+j.name+'" to the website.')
+  }).catch(function(e){
+    if(e.status===409&&e.message==='exists'){overwrite=true;$('#srv-save').textContent='Replace existing';srvMsg('A layout with that name already exists. Choose Replace existing to overwrite it, or change the name.',1)}
+    else srvErr(e)})});
+$('#b-save').addEventListener('click',function(){openSrv('save')});
+$('#b-open').addEventListener('click',function(){openSrv('open')});
+$('#srv-dl').addEventListener('click',saveFile);
+$('#srv-up').addEventListener('click',function(){$('#f-open').click()});
+$('#srv-close').addEventListener('click',closeSrv);
+$('#srv').addEventListener('click',function(e){if(e.target.id==='srv')closeSrv()});
 $('#f-open').addEventListener('change',function(e){openFile(e.target.files[0]);e.target.value=''});
 $('#io-example').addEventListener('click',function(){seed();ui.sel=null;commit();render(true);$('#io').hidden=true});
 var clrT=null;
