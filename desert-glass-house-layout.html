@@ -1,9 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Desert Glass House Layout</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Figtree:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
+html{margin:0}
+
 /* Layout: three-column workbench. Library left, floor plan centre, inspector + summary right. Stacks on phones. */
 :root{
   --bg:#E8EDEA; --panel:#F7F9F7; --panel-2:#EDF2EF; --ink:#14302F; --muted:#587270; --line:#CAD6D1;
@@ -160,7 +167,10 @@ th.n,td.n{text-align:right;font-family:var(--f-mono);font-variant-numeric:tabula
       <button class="btn" id="b-under" aria-pressed="false" title="Overlay the original AS-BUILT drawing to check the traced walls">Original plan</button>
       <button class="btn" id="b-undo" title="Undo (Ctrl/Cmd+Z)">Undo</button>
       <button class="btn" id="b-redo" title="Redo (Shift+Ctrl/Cmd+Z)">Redo</button>
-      <button class="btn" id="b-io">Save / share</button>
+      <button class="btn primary" id="b-save" title="Download this layout as a file (Ctrl/Cmd+S)">Save file</button>
+      <button class="btn" id="b-open" title="Open a saved layout file (Ctrl/Cmd+O)">Open file</button>
+      <input type="file" id="f-open" accept=".json,application/json" hidden>
+      <button class="btn" id="b-io" title="Copy or paste layout text">Copy / paste</button>
     </div>
   </header>
 
@@ -203,8 +213,8 @@ th.n,td.n{text-align:right;font-family:var(--f-mono);font-variant-numeric:tabula
 
 <div id="io" hidden>
   <div class="box" role="dialog" aria-modal="true" aria-labelledby="io-h">
-    <h2 id="io-h">Save or share this layout</h2>
-    <p class="hint">Your layout saves in this browser automatically. To move it to another computer or send it to a teammate, copy the text below and paste it into the planner there, then choose Load.</p>
+    <h2 id="io-h">Copy or paste a layout</h2>
+    <p class="hint">Use Save file and Open file in the toolbar to share layouts as files. If a download is blocked, copy this text instead, or paste a layout here and choose Load.</p>
     <textarea id="io-t" spellcheck="false" aria-label="Layout data"></textarea>
     <div class="row" style="margin:0">
       <button class="btn primary" id="io-copy">Copy</button>
@@ -605,7 +615,9 @@ function addItem(t,x,y){
   var tries=0;while(tries<12&&S.items.some(function(q){return Math.abs(q.x-o.x)<.05&&Math.abs(q.y-o.y)<.05&&q.t===t})){o.x+=1;o.y+=1;tries++}
   S.items.push(o);ui.sel={k:'item',id:o.id};commit();render(true)}
 svg.addEventListener('dragover',function(e){e.preventDefault()});
-svg.addEventListener('drop',function(e){e.preventDefault();var t=(e.dataTransfer.getData('text/plain')||'');if(t.indexOf('dgh:')!==0)return;t=t.slice(4);if(!T[t])return;var p=world(e);addItem(t,p[0],p[1])});
+svg.addEventListener('drop',function(e){e.preventDefault();
+  if(e.dataTransfer.files&&e.dataTransfer.files.length){openFile(e.dataTransfer.files[0]);return}
+  var t=(e.dataTransfer.getData('text/plain')||'');if(t.indexOf('dgh:')!==0)return;t=t.slice(4);if(!T[t])return;var p=world(e);addItem(t,p[0],p[1])});
 
 /* ---------- pointer interaction ---------- */
 var ptrs={},drag=null,pinch=null;
@@ -657,13 +669,15 @@ var sumT=null;function renderSummaryLight(){clearTimeout(sumT);sumT=setTimeout(r
 /* ---------- keyboard ---------- */
 document.addEventListener('keydown',function(e){
   if(e.key==='Escape'&&!$('#io').hidden){$('#io').hidden=true;return}
+  if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='s'){e.preventDefault();saveFile();return}
+  if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='o'){e.preventDefault();$('#f-open').click();return}
   var t=e.target,typing=t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.tagName==='SELECT');
   var mod=e.metaKey||e.ctrlKey;
   if(mod&&e.key.toLowerCase()==='z'){if(typing&&t.id!=='')return;e.preventDefault();e.shiftKey?redo():undo();return}
   if(typing)return;
   if(mod&&e.key.toLowerCase()==='d'){e.preventDefault();dupSel();return}
   if(e.key==='Delete'||e.key==='Backspace'){if(ui.sel){e.preventDefault();delSel()}return}
-  if(e.key==='Escape'){$('#io').hidden=true;ui.sel=null;ui.measure=null;render(true);return}
+  if(e.key==='Escape'){ui.sel=null;ui.measure=null;render(true);return}
   var k=e.key.toLowerCase();
   if(k==='r'&&ui.sel){rotSel(e.shiftKey?-90:90);return}
   if(k==='v')setTool('select');if(k==='h')setTool('pan');if(k==='m')setTool('measure');
@@ -693,11 +707,41 @@ $('#io').addEventListener('click',function(e){if(e.target.id==='io')$('#io').hid
 $('#io-copy').addEventListener('click',function(){var t=$('#io-t');t.select();
   if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t.value).then(function(){ioMsg('Copied.')},function(){ioMsg('Select the text and copy it with Ctrl/Cmd+C.')});
   else ioMsg('Select the text and copy it with Ctrl/Cmd+C.')});
+function nf(v){return typeof v==='number'&&isFinite(v)}
+function applyLayout(text){
+  var d;try{d=JSON.parse(text)}catch(_){return false}
+  if(!d||!Array.isArray(d.items)||!Array.isArray(d.zones))return false;
+  var items=d.items.filter(function(o){return o&&nf(o.x)&&nf(o.y)&&nf(o.w)&&nf(o.d)&&o.w>0&&o.d>0&&(o.t==='custom'||T[o.t])});
+  var zones=d.zones.filter(function(z){return z&&nf(z.x)&&nf(z.y)&&nf(z.w)&&nf(z.h)&&z.w>0&&z.h>0});
+  items.forEach(function(o){o.r=nf(o.r)?o.r:0;if(o.t==='custom'&&!CATS[o.cat])o.cat='store'});
+  zones.forEach(function(z){if(!CATS[z.cat])z.cat='store';z.n=String(z.n||'Zone')});
+  S={items:items,zones:zones,seq:1,example:false};
+  var n=0;S.items.concat(S.zones).forEach(function(o){o.id='n'+(++n)});S.seq=n+1;
+  ui.sel=null;commit();render(true);fitAll();return true}
 $('#io-load').addEventListener('click',function(){
-  try{var d=JSON.parse($('#io-t').value);if(!Array.isArray(d.items)||!Array.isArray(d.zones))throw 0;
-    S={items:d.items,zones:d.zones,seq:1,example:false};
-    var mx=0;S.items.concat(S.zones).forEach(function(o){var n=parseInt(String(o.id).slice(1),10);if(n>mx)mx=n});S.seq=mx+1;
-    ui.sel=null;commit();render(true);ioMsg('Layout loaded.')}catch(_){ioMsg('That text is not a layout. Paste the full text you copied.')}});
+  ioMsg(applyLayout($('#io-t').value)?'Layout loaded.':'That text is not a layout. Paste the full text you copied.')});
+
+/* ---------- save / open as a file ---------- */
+var toastT=null;
+function toast(m){ui.toast=m;renderNotes();clearTimeout(toastT);toastT=setTimeout(function(){ui.toast='';renderNotes()},3500)}
+function saveFile(){
+  var text=JSON.stringify({app:'desert-glass-house',version:1,saved:new Date().toISOString(),items:S.items,zones:S.zones},null,1);
+  var dt=new Date(),p=function(n){return (n<10?'0':'')+n};
+  var name='desert-glass-house-layout-'+dt.getFullYear()+'-'+p(dt.getMonth()+1)+'-'+p(dt.getDate())+'.json';
+  try{
+    var url=URL.createObjectURL(new Blob([text],{type:'application/json'})),a=document.createElement('a');
+    a.href=url;a.download=name;document.body.appendChild(a);a.click();document.body.removeChild(a);
+    setTimeout(function(){URL.revokeObjectURL(url)},2000);
+    toast('Saved '+name+' to your downloads.')
+  }catch(_){$('#b-io').click();ioMsg('Downloads are blocked here. Copy this text and keep it in a file.')}}
+function openFile(f){
+  if(!f)return;var r=new FileReader();
+  r.onload=function(){toast(applyLayout(String(r.result))?'Opened '+f.name+'.':'That file is not a Desert Glass House layout.')};
+  r.onerror=function(){toast('Could not read that file.')};
+  r.readAsText(f)}
+$('#b-save').addEventListener('click',saveFile);
+$('#b-open').addEventListener('click',function(){$('#f-open').click()});
+$('#f-open').addEventListener('change',function(e){openFile(e.target.files[0]);e.target.value=''});
 $('#io-example').addEventListener('click',function(){seed();ui.sel=null;commit();render(true);$('#io').hidden=true});
 var clrT=null;
 $('#io-clear').addEventListener('click',function(){var b=$('#io-clear');
@@ -707,6 +751,7 @@ $('#io-clear').addEventListener('click',function(){var b=$('#io-clear');
 /* ---------- notes ---------- */
 function renderNotes(){
   var h='';
+  if(ui.toast)h+='<div class="note" role="status">'+esc(ui.toast)+'</div>';
   if(S.example)h+='<div class="note">Example layout so you can see how it works. <button id="n-clear">Clear it</button><button id="n-keep" aria-label="Dismiss">Dismiss</button></div>';
   $('#notes').innerHTML=h;
   var c=$('#n-clear'),k=$('#n-keep');
